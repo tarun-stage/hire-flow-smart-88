@@ -4,11 +4,24 @@ import multer from "multer";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import fs from "fs/promises";
-import { analyzeResume, generateJobDescription } from "./services/gemini.js";
+import { exec } from "child_process";
+import { promisify } from "util";
+import {
+  analyzeResume,
+  geminiModel,
+  generateJobDescription,
+} from "./services/gemini.js";
 import { sendEmail } from "./services/email.js";
-import { PORT, SCORING_CRITERIA } from "./constants.js";
+import { AI_Interview_links, PORT, SCORING_CRITERIA } from "./constants.js";
 import MarkdownIt from "markdown-it";
 import { existsSync, readFileSync, writeFileSync } from "fs";
+import path from "path";
+
+const execAsync = promisify(exec);
+
+// Get current file path and directory
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const app = express();
 const md = new MarkdownIt();
@@ -16,8 +29,16 @@ const md = new MarkdownIt();
 // Path to the JSON file that will act as our database
 const DB_PATH = join(process.cwd(), "data", "requisitions.json");
 const CANDIDATES_DB_PATH = join(process.cwd(), "data", "candidates.json");
-const ASSIGNMENT_PATH = join(process.cwd(), "assignment", "frontend.pdf");
 const PR_REVIEWS_PATH = join(process.cwd(), "data", "pr-reviews.json");
+
+const isFrontend = (role) => {
+  return role.toLowerCase().includes("frontend");
+};
+
+// Add this helper function near the top with other helper functions
+const isHR = (role) => {
+  return role.toLowerCase().includes("hr");
+};
 
 // Ensure the data directory exists and initialize the JSON files
 async function initializeDatabase() {
@@ -75,22 +96,27 @@ async function writeCandidates(candidates) {
   await fs.writeFile(CANDIDATES_DB_PATH, JSON.stringify(candidates, null, 2));
 }
 
+// Increase payload size limit for JSON and URL-encoded data
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
 // Configure multer for file upload
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
-    const resumeDir = join(process.cwd(), "resume");
+    const uploadDir = join(process.cwd(), "uploads");
     try {
-      await fs.access(resumeDir);
-      console.log("Resume directory exists");
+      await fs.access(uploadDir);
+      console.log("Upload directory exists");
     } catch {
-      await fs.mkdir(resumeDir);
-      console.log("Created resume directory");
+      await fs.mkdir(uploadDir);
+      console.log("Created upload directory");
     }
-    cb(null, resumeDir);
+    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     console.log(`Handling uploaded file: ${file.originalname}`);
-    cb(null, file.originalname);
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + "-" + file.originalname);
   },
 });
 
@@ -98,17 +124,39 @@ const upload = multer({
   storage,
   fileFilter: (req, file, cb) => {
     console.log(`Checking file type: ${file.mimetype}`);
-    if (file.mimetype === "application/pdf") {
+    if (
+      file.mimetype === "application/pdf" ||
+      file.mimetype === "application/msword" ||
+      file.mimetype ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) {
       cb(null, true);
     } else {
-      cb(new Error("Only PDF files are allowed"));
+      cb(new Error("Only PDF, DOC, and DOCX files are allowed"));
     }
   },
+  limits: {
+    fileSize: 100 * 1024 * 1024, // 100MB limit
+  },
+});
+
+// Add error handling middleware for multer errors
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({
+        error: "File size too large. Maximum size is 100MB.",
+      });
+    }
+    return res.status(400).json({
+      error: `Upload error: ${err.message}`,
+    });
+  }
+  next(err);
 });
 
 // Middleware
 app.use(cors());
-app.use(express.json());
 
 // Routes
 app.post("/api/create-jd", async (req, res) => {
@@ -335,8 +383,10 @@ app.post("/api/apply", upload.single("resume"), async (req, res) => {
       ? `Job Description: ${jobRequisition.jobDescription}\n\nCover Letter: ${coverLetter}`
       : jobRequisition.jobDescription;
 
-    console.log("Analyzing resume for role:", role);
-    const { score, analysis } = await analyzeResume(resumeContent, prompt);
+    console.log("Analyzing portfolio for role:", role);
+    const result = await analyzeResume(resumeContent, prompt);
+    const score = result.score;
+    const analysis = result.analysis;
 
     // Determine status based on score
     let status;
@@ -389,6 +439,11 @@ app.post("/api/apply", upload.single("resume"), async (req, res) => {
     // Send status email to candidate
     console.log("Sending status email to candidate");
     if (status === SCORING_CRITERIA.SHORTLISTED.status) {
+      const ASSIGNMENT_PATH = path.join(
+        process.cwd(),
+        "assignments",
+        isFrontend(role) ? "frontend.pdf" : isHR(role) ? "hr.pdf" : "design.pdf"
+      );
       // For shortlisted candidates, send assignment
       await sendEmail({
         to: email,
@@ -396,7 +451,11 @@ app.post("/api/apply", upload.single("resume"), async (req, res) => {
         html: emailTemplate(role, name),
         attachments: [
           {
-            filename: "frontend.pdf",
+            filename: isFrontend(role)
+              ? "frontend.pdf"
+              : isHR(role)
+                ? "hr.pdf"
+                : "design.pdf",
             path: ASSIGNMENT_PATH,
           },
         ],
@@ -456,179 +515,466 @@ function writePrReviews(reviews) {
   }
 }
 
-// Add this function after other functions
-async function analyzePR(prUrl, assignmentPath) {
+// Add this helper function
+function getDeadlineDate() {
+  const deadline = new Date();
+  deadline.setDate(deadline.getDate() + 2);
+  return deadline.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+// Function to validate and extract GitHub URL
+function getRepoUrlFromGithubUrl(githubUrl) {
+  // Simply append .git if not present
+  if (!githubUrl.endsWith(".git")) {
+    return `${githubUrl}.git`;
+  }
+  return githubUrl;
+}
+
+// Function to clone repository
+async function cloneRepository(repoUrl) {
+  const repoName = repoUrl.split("/").pop().replace(".git", "");
+  const cloneDir = path.join(process.cwd(), "repos", repoName);
+
+  // Create repos directory if it doesn't exist
+  if (!existsSync(path.join(process.cwd(), "repos"))) {
+    await fs.mkdir(path.join(process.cwd(), "repos"));
+  }
+
+  // Remove existing directory if it exists
+  if (existsSync(cloneDir)) {
+    await fs.rm(cloneDir, { recursive: true, force: true });
+  }
+
+  // Clone the repository
+  await execAsync(`git clone ${repoUrl} ${cloneDir}`);
+  return cloneDir;
+}
+
+// Function to concatenate project files
+async function concatenateProjectFiles(projectDir) {
+  let outputContent = "";
+
+  async function processDirectory(directoryPath) {
+    const filesAndDirs = await fs.readdir(directoryPath);
+
+    for (const item of filesAndDirs) {
+      const itemPath = path.join(directoryPath, item);
+      const stats = await fs.stat(itemPath);
+
+      // Skip node_modules, .git, and other common directories
+      if (stats.isDirectory()) {
+        if (
+          ["node_modules", ".git", ".vscode", "dist", "build"].includes(item)
+        ) {
+          continue;
+        }
+        await processDirectory(itemPath);
+      } else {
+        // Skip common files
+        if ([".DS_Store", "package-lock.json", "yarn.lock"].includes(item)) {
+          continue;
+        }
+
+        try {
+          const fileContent = await fs.readFile(itemPath, "utf8");
+          const relativePath = path.relative(projectDir, itemPath);
+          outputContent += `--- START FILE: ${relativePath} ---\n`;
+          outputContent += `\`\`\`${path.extname(relativePath).substring(1) || "plaintext"}\n`;
+          outputContent += fileContent;
+          outputContent += `\n\`\`\`\n`;
+          outputContent += `--- END FILE: ${relativePath} ---\n\n`;
+        } catch (error) {
+          console.error(`Error reading file ${itemPath}:`, error);
+        }
+      }
+    }
+  }
+
+  await processDirectory(projectDir);
+  return outputContent;
+}
+
+// Update the analyzeGithubRepo function to handle HR roles
+async function analyzeGithubRepo(githubUrl, previewUrl, assignmentPath, role) {
   try {
-    // Read the assignment PDF
-    const assignmentContent = await fs.readFile(assignmentPath, "utf-8");
+    const assignmentContent = await fs.readFile(assignmentPath, "utf8");
 
-    // Create a prompt for Gemini to analyze the PR
-    const prompt = `
-      Please analyze this GitHub PR: ${prUrl}
-      against the following assignment requirements:
-      
-      ${assignmentContent}
-      
-      Provide:
-      1. A score out of 100
-      2. Detailed analysis of the implementation
-      3. Areas of improvement
-      4. Code quality assessment
-    `;
+    // Clone and process the repository
+    const repoName = githubUrl.split("/").pop().replace(".git", "");
+    const cloneDir = path.join(process.cwd(), "repos", repoName);
 
-    // Call Gemini for analysis
-    const { score, analysis } = await analyzeResume(prompt, assignmentContent);
+    // Create repos directory if it doesn't exist
+    if (!fs.existsSync(path.join(process.cwd(), "repos"))) {
+      await fs.mkdir(path.join(process.cwd(), "repos"));
+    }
+
+    // Remove existing directory if it exists
+    if (fs.existsSync(cloneDir)) {
+      await fs.rm(cloneDir, { recursive: true, force: true });
+    }
+
+    // Clone the repository
+    console.log("Cloning repository...");
+    await execAsync(`git clone "${githubUrl}" "${cloneDir}"`);
+
+    // Process repository files
+    let projectCode = "";
+    const ignoreDirs = ["node_modules", ".git", "dist", "build", ".next"];
+    const ignoreFiles = [".DS_Store", "package-lock.json", "yarn.lock"];
+
+    async function processDirectory(directoryPath) {
+      const filesAndDirs = await fs.readdir(directoryPath);
+
+      for (const item of filesAndDirs) {
+        const itemPath = path.join(directoryPath, item);
+        const stats = await fs.stat(itemPath);
+
+        if (stats.isDirectory()) {
+          if (ignoreDirs.includes(item)) {
+            console.log(`Skipping directory: ${item}`);
+            continue;
+          }
+          await processDirectory(itemPath);
+        } else {
+          if (ignoreFiles.includes(item)) {
+            console.log(`Skipping file: ${item}`);
+            continue;
+          }
+
+          try {
+            const content = await fs.readFile(itemPath, "utf8");
+            const relativePath = path.relative(cloneDir, itemPath);
+            projectCode += `\n=== FILE: ${relativePath} ===\n`;
+            projectCode += content;
+            projectCode += `\n=== END FILE: ${relativePath} ===\n\n`;
+          } catch (error) {
+            console.error(`Error reading file ${itemPath}:`, error);
+          }
+        }
+      }
+    }
+
+    // Process all files
+    console.log("Processing repository files...");
+    await processDirectory(cloneDir);
+
+    // Clean up
+    console.log("Cleaning up...");
+    await fs.rm(cloneDir, { recursive: true, force: true });
+
+    // Customize prompt based on role
+    let roleSpecificPrompt = "";
+    if (isHR(role)) {
+      roleSpecificPrompt = `
+Please focus on:
+1. HR Process Implementation:
+   - Review HR workflow implementation
+   - Check recruitment process automation
+   - Evaluate candidate management features
+   - Assess employee onboarding flows
+
+2. Data Management:
+   - Review data organization and structure
+   - Check data validation and security
+   - Evaluate database schema design
+   - Assess data privacy compliance
+
+3. User Experience:
+   - Evaluate HR portal usability
+   - Check form designs and validations
+   - Assess workflow efficiency
+   - Review accessibility features
+
+4. Technical Implementation:
+   - Review API integrations
+   - Check state management
+   - Evaluate error handling
+   - Assess code maintainability`;
+    } else {
+      roleSpecificPrompt = `
+Please focus on:
+1. Code Analysis:
+   - Review the code line by line
+   - Check code quality, best practices, and patterns
+   - Evaluate error handling and edge cases
+   - Assess component structure and organization
+
+2. UI/UX Analysis:
+   - Visit the preview URL and test the implementation
+   - Evaluate visual design and user experience
+   - Check responsiveness and cross-browser compatibility
+   - Assess accessibility implementation
+
+3. Feature Implementation:
+   - Verify all required features are implemented
+   - Check feature completeness and functionality
+   - Evaluate code reusability and maintainability
+   - Assess performance considerations
+
+4. Technical Assessment:
+   - Review technical decisions and architecture
+   - Evaluate state management approach
+   - Check API integration and data handling
+   - Assess testing coverage`;
+    }
+
+    const prompt = `You are an expert code reviewer. Please analyze this ${role} assignment submission:
+
+Repository URL: ${githubUrl}
+Preview URL: ${previewUrl}
+
+Project Code:
+${projectCode}
+
+Assignment Requirements:
+${assignmentContent}
+${roleSpecificPrompt}
+
+Provide a detailed analysis with:
+1. A score out of 100 (40% code quality, 30% feature implementation, 20% UI/UX, 10% technical architecture)
+2. A breakdown of strengths and weaknesses
+3. Specific code examples with suggestions
+4. UI/UX observations and recommendations
+5. Feature completion status
+6. Technical recommendations
+
+Format your response as:
+SCORE: [number]
+ANALYSIS: [detailed analysis]`;
+
+    const result = await geminiModel.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    // Extract score and analysis
+    const scoreMatch = text.match(/SCORE:\s*(\d+)/);
+    const analysisMatch = text.match(/ANALYSIS:([\s\S]*)/);
+
+    const score = scoreMatch ? parseInt(scoreMatch[1]) : 0;
+    const analysis = analysisMatch ? analysisMatch[1].trim() : text;
 
     return { score, analysis };
   } catch (error) {
-    console.error("Error analyzing PR:", error);
-    throw error;
+    console.error("Error analyzing repository:", error);
+    throw new Error("Failed to analyze repository");
   }
 }
 
-// Update the PR review endpoint
-app.post("/api/pr-review", async (req, res) => {
+// Function to analyze design portfolio with Gemini
+async function analyzeDesignPortfolio(portfolioFile, assignmentPath) {
   try {
-    const { name, email, prUrl, comments } = req.body;
+    const assignmentContent = await fs.readFile(assignmentPath, "utf8");
+    const portfolioContent = await fs.readFile(portfolioFile.path, "utf8");
 
-    // Validate input
-    if (!name || !email || !prUrl) {
+    const prompt = `You are an expert design reviewer. Please analyze this design assignment submission:
+
+Portfolio Content:
+${portfolioContent}
+
+Assignment Requirements:
+${assignmentContent}
+
+Please follow these steps in your analysis:
+
+1. Design Analysis:
+   - Review the design principles applied
+   - Evaluate visual hierarchy and composition
+   - Check typography and color usage
+   - Assess consistency and branding
+
+2. UX Analysis:
+   - Evaluate user flow and interaction design
+   - Check information architecture
+   - Assess accessibility considerations
+   - Review responsive design approach
+
+3. Implementation Quality:
+   - Evaluate design execution
+   - Check attention to detail
+   - Assess technical implementation
+   - Review file organization
+
+4. Overall Assessment:
+   - Compare with assignment requirements
+   - Evaluate creativity and innovation
+   - Check presentation quality
+   - Assess professional standards
+
+Provide a detailed analysis with:
+1. A score out of 100 (40% design quality, 30% UX implementation, 20% technical execution, 10% presentation)
+2. A breakdown of strengths and weaknesses
+3. Specific design examples with suggestions
+4. UX observations and recommendations
+5. Implementation quality assessment
+6. Overall recommendations
+
+Format your response as:
+SCORE: [number]
+ANALYSIS: [detailed analysis]`;
+
+    const result = await geminiModel.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    // Extract score and analysis
+    const scoreMatch = text.match(/SCORE:\s*(\d+)/);
+    const analysisMatch = text.match(/ANALYSIS:([\s\S]*)/);
+
+    const score = scoreMatch ? parseInt(scoreMatch[1]) : 0;
+    const analysis = analysisMatch ? analysisMatch[1].trim() : text;
+
+    return { score, analysis };
+  } catch (error) {
+    console.error("Error analyzing design portfolio:", error);
+    throw new Error("Failed to analyze design portfolio");
+  }
+}
+
+// Update the PR review endpoint to handle HR roles
+app.post("/api/pr-review", upload.single("portfolio"), async (req, res) => {
+  try {
+    const { name, email, role, githubUrl, previewUrl } = req.body;
+    const isFrontendRole = role.toLowerCase().includes("frontend");
+    const isHRRole = isHR(role);
+
+    // Validate required fields
+    if (!name || !email || !role) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Validate PR URL format
-    if (!prUrl.match(/^https:\/\/github\.com\/[\w-]+\/[\w-]+\/pull\/\d+$/)) {
-      return res.status(400).json({ error: "Invalid PR URL format" });
+    // Role-specific validation
+    if (isFrontendRole || isHRRole) {
+      if (!githubUrl || !previewUrl) {
+        return res.status(400).json({
+          error:
+            "GitHub URL and preview URL are required for frontend and HR roles",
+        });
+      }
+    } else {
+      if (!req.file) {
+        return res
+          .status(400)
+          .json({ error: "Portfolio file is required for design roles" });
+      }
     }
 
-    // Analyze PR using Gemini
-    console.log("Analyzing PR submission...");
-    const { score, analysis } = await analyzePR(prUrl, ASSIGNMENT_PATH);
-    console.log("PR analysis complete. Score:", score);
+    // Get the appropriate assignment file path
+    let assignmentPath;
+    if (isFrontendRole) {
+      assignmentPath = path.join("assignments", "frontend.pdf");
+    } else if (isHRRole) {
+      assignmentPath = path.join("assignments", "hr.pdf");
+    } else {
+      assignmentPath = path.join("assignments", "design.pdf");
+    }
+
+    // Analyze submission based on role
+    let analysis;
+    if (isFrontendRole || isHRRole) {
+      analysis = await analyzeGithubRepo(
+        githubUrl,
+        previewUrl,
+        assignmentPath,
+        role
+      );
+    } else {
+      analysis = await analyzeDesignPortfolio(req.file, assignmentPath);
+    }
 
     // Determine status based on score
     let status;
-    let emailTemplate;
-    let emailSubject;
-
-    if (score >= SCORING_CRITERIA.SHORTLISTED.minScore) {
-      status = SCORING_CRITERIA.SHORTLISTED.status;
-      emailTemplate = SCORING_CRITERIA.SHORTLISTED.emailTemplate;
-      emailSubject = SCORING_CRITERIA.SHORTLISTED.emailSubject;
-    } else if (score >= SCORING_CRITERIA.HOLD.minScore) {
-      status = SCORING_CRITERIA.HOLD.status;
-      emailTemplate = SCORING_CRITERIA.HOLD.emailTemplate;
-      emailSubject = SCORING_CRITERIA.HOLD.emailSubject;
+    if (analysis.score >= 50) {
+      status = "SHORTLISTED";
+    } else if (analysis.score >= 20) {
+      status = "HOLD";
     } else {
-      status = SCORING_CRITERIA.REJECTED.status;
-      emailTemplate = SCORING_CRITERIA.REJECTED.emailTemplate;
-      emailSubject = SCORING_CRITERIA.REJECTED.emailSubject;
+      status = "REJECTED";
     }
 
-    // Create new PR review
-    const newReview = {
-      id: Date.now().toString(),
+    // Create review object
+    const review = {
       name,
       email,
-      prUrl,
-      comments: comments || "",
+      role,
       status,
-      submittedAt: new Date().toISOString(),
-      analysis: {
-        score,
-        details: analysis,
-      },
+      score: analysis.score,
+      analysis: analysis.analysis,
+      submittedAt: new Date(),
+      ...(isFrontendRole || isHRRole
+        ? {
+            githubUrl,
+            previewUrl,
+          }
+        : {
+            portfolioFile: req.file.filename,
+          }),
     };
 
-    // Save to PR reviews database
-    const reviews = readPrReviews();
-    reviews.push(newReview);
-    writePrReviews(reviews);
+    // Store in MongoDB
+    await prReviews.insertOne(review);
 
-    // Find or create candidate record
-    const candidates = await readCandidates();
-    const existingCandidate = candidates.find((c) => c.email === email);
-
-    if (existingCandidate) {
-      // Update existing candidate
-      existingCandidate.prSubmission = {
-        url: prUrl,
-        submittedAt: new Date().toISOString(),
-        status,
-        analysis: {
-          score,
-          details: analysis,
-        },
-      };
-    } else {
-      // Create new candidate
-      candidates.push({
-        id: Date.now(),
+    // Store in PostgreSQL
+    await pool.query(
+      `INSERT INTO candidates (name, email, role, status, score, analysis, submitted_at, github_url, preview_url, portfolio_file)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
         name,
         email,
-        appliedAt: new Date().toISOString(),
+        role,
         status,
-        prSubmission: {
-          url: prUrl,
-          submittedAt: new Date().toISOString(),
-          status,
-          analysis: {
-            score,
-            details: analysis,
-          },
-        },
-      });
-    }
+        analysis.score,
+        analysis.analysis,
+        new Date(),
+        isFrontendRole || isHRRole ? githubUrl : null,
+        isFrontendRole || isHRRole ? previewUrl : null,
+        !isFrontendRole && !isHRRole ? req.file.filename : null,
+      ]
+    );
 
-    // Save updated candidates
-    await writeCandidates(candidates);
+    // Send email notifications
+    const emailData = {
+      name,
+      email,
+      role,
+      status,
+      score: analysis.score,
+      analysis: analysis.analysis,
+      ...(isFrontendRole || isHRRole
+        ? {
+            githubUrl,
+            previewUrl,
+          }
+        : {
+            portfolioFile: req.file.filename,
+          }),
+    };
 
-    // Send email notification to admin
+    // Send to admin
     await sendEmail({
-      to: "tarun@stage.in",
-      subject: "New PR Review Submission",
-      html: `
-        <h2>New PR Review Submission</h2>
-        <p><strong>Name:</strong> ${name}</p>
-        <p><strong>Email:</strong> ${email}</p>
-        <p><strong>PR URL:</strong> <a href="${prUrl}">${prUrl}</a></p>
-        <p><strong>Score:</strong> ${score}%</p>
-        <p><strong>Status:</strong> ${status}</p>
-        <h3>Analysis:</h3>
-        <p>${analysis}</p>
-        ${comments ? `<p><strong>Comments:</strong> ${comments}</p>` : ""}
-        <p><strong>Submitted At:</strong> ${new Date().toLocaleString()}</p>
-      `,
+      to: process.env.ADMIN_EMAIL,
+      subject: `New ${role} Assignment Submission - ${status}`,
+      template: "admin-notification",
+      data: emailData,
     });
 
-    // Send confirmation email to candidate
+    // Send to candidate
     await sendEmail({
       to: email,
-      subject: "PR Review Submission Received",
-      html: `
-        <h2>Thank You for Your Submission</h2>
-        <p>Dear ${name},</p>
-        <p>We have received your PR review submission. Our team will review your code and get back to you soon.</p>
-        <p>Your PR URL: <a href="${prUrl}">${prUrl}</a></p>
-        <p><strong>Initial Analysis Score:</strong> ${score}%</p>
-        <h3>Analysis Summary:</h3>
-        <p>${analysis}</p>
-        ${comments ? `<p>Your comments: ${comments}</p>` : ""}
-        <p>Best regards,<br>The Stage Team</p>
-      `,
+      subject: `Your ${role} Assignment Submission Results`,
+      template: "candidate-notification",
+      data: emailData,
     });
 
-    res.json({
-      success: true,
-      review: newReview,
-      analysis: {
-        score,
-        details: analysis,
-      },
-    });
+    res.json({ review });
   } catch (error) {
-    console.error("Error processing PR review:", error);
-    res.status(500).json({ error: "Failed to process PR review" });
+    console.error("Error processing submission:", error);
+    res.status(500).json({ error: "Failed to process submission" });
   }
 });
 

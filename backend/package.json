@@ -18,5 +18,9 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.3"
-  }
+  },
+  "description": "This is the backend service for the resume analysis application. It handles file uploads and uses Google's Gemini AI to analyze resumes against job descriptions.",
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }

@@ -87,3 +87,10 @@ export const SCORING_CRITERIA = {
     `,
   },
 };
+
+export const AI_Interview_links = {
+  design:
+    "https://screener.hyring.com/jobseeker/ai-interview/preview?interviewId=e038ce98-5bd6-4496-bbdc-7a3d164304be",
+  frontend:
+    "https://screener.hyring.com/jobseeker/ai-interview/preview?interviewId=7cdd7a6d-c26c-4cf1-a8e1-5b717c489571",
+};

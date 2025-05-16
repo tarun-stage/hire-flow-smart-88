@@ -34,8 +34,39 @@ export const generateJobDescription = async (role, yearsOfExperience) => {
 
 export const analyzeResume = async (resumeContent, jobDescription) => {
   const prompt = `
-    Analyze this resume against the following job description and provide a compatibility score from 0-100.
-    Also provide a brief explanation of the score.
+    Evaluate the following resume against the provided Job Description. For each parameter below, assess its relevance and strength in relation to the JD. Provide a brief pointer analysis explaining why the score for each parameter is increased or decreased. Assign a score from 1 to 5 (where 1 is poor/irrelevant and 5 is excellent/highly relevant) for each parameter. Finally, calculate a total weighted score out of the maximum possible points and provide an overall evaluation summary, highlighting the resume's key strengths and areas for improvement based on its alignment with the Job Description."
+Evaluation Parameters (with emphasis on JD relevance):
+Contact Information (Maximum Score: 5):
+Completeness, professionalism, and clarity.
+Pointer Analysis: Briefly note any issues or if information is clearly presented.
+Summary/Objective (Maximum Score: 10):
+Relevance to JD: How well does it tailor the candidate's profile to the specific requirements and keywords of the Job Description?
+Clarity, conciseness, and impact.
+Pointer Analysis: Highlight specific phrases or skills mentioned that align with the JD or note the absence of such alignment.
+Work Experience (Maximum Score: 30):
+Relevance to JD: How directly do the responsibilities and achievements in previous roles align with the requirements and preferred experience outlined in the Job Description?
+Use of action verbs and quantifiable achievements.
+Progression and growth.
+Pointer Analysis: Point out 1-2 key achievements or responsibilities that are highly relevant to the JD and explain why. Conversely, note any significant disconnects.
+Education (Maximum Score: 10):
+Relevance to JD: How closely do the degrees, certifications, and coursework match the educational requirements and preferences stated in the Job Description?
+Institution quality (if relevant).
+Pointer Analysis: Mention if the required degree or a highly relevant field of study is present. Note if any preferred certifications are listed.
+Skills (Maximum Score: 25):
+Relevance to JD: How many of the key technical and soft skills mentioned in the Job Description are explicitly listed or demonstrated through experience in the resume?
+Clarity and categorization of skills.
+Pointer Analysis: List 1-2 crucial skills from the JD that are clearly present and/or mention the absence of key required skills.
+Interpersonal Skills (Maximum Score: 5):
+Evidence of teamwork, communication, problem-solving, leadership, or other relevant soft skills, ideally demonstrated through examples in the work experience or summary.
+Pointer Analysis: Point to any examples or keywords suggesting strong interpersonal skills or note their absence.
+Formatting and Presentation (Maximum Score: 5):
+Cleanliness, professionalism, and ATS-friendliness.
+Pointer Analysis: Briefly note any significant formatting issues or strengths.
+Work History Stability (Maximum Score: 10):
+Absence of frequent job switches (pattern of changing jobs every 2 years or less without clear progression).
+Job:Years Ratio (not exceeding 0.65).
+Pointer Analysis: Note if there's a pattern of frequent switching or if the job:years ratio is high.
+Maximum Total Weighted Score: 100
     
     Job Description:
     ${jobDescription}
