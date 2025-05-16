@@ -156,7 +156,16 @@ app.use((err, req, res, next) => {
 });
 
 // Middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    exposedHeaders: ["Content-Range", "X-Content-Range"],
+    credentials: true,
+    maxAge: 86400, // 24 hours
+  })
+);
 
 // Routes
 app.post("/api/create-jd", async (req, res) => {
@@ -454,8 +463,8 @@ app.post("/api/apply", upload.single("resume"), async (req, res) => {
             filename: isFrontend(role)
               ? "frontend.pdf"
               : isHR(role)
-                ? "hr.pdf"
-                : "design.pdf",
+              ? "hr.pdf"
+              : "design.pdf",
             path: ASSIGNMENT_PATH,
           },
         ],
@@ -585,7 +594,9 @@ async function concatenateProjectFiles(projectDir) {
           const fileContent = await fs.readFile(itemPath, "utf8");
           const relativePath = path.relative(projectDir, itemPath);
           outputContent += `--- START FILE: ${relativePath} ---\n`;
-          outputContent += `\`\`\`${path.extname(relativePath).substring(1) || "plaintext"}\n`;
+          outputContent += `\`\`\`${
+            path.extname(relativePath).substring(1) || "plaintext"
+          }\n`;
           outputContent += fileContent;
           outputContent += `\n\`\`\`\n`;
           outputContent += `--- END FILE: ${relativePath} ---\n\n`;
