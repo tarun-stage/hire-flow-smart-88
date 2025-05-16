@@ -26,6 +26,28 @@ const __dirname = dirname(__filename);
 const app = express();
 const md = new MarkdownIt();
 
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    exposedHeaders: ["Content-Range", "X-Content-Range"],
+    credentials: true,
+    maxAge: 86400, // 24 hours
+  })
+);
+app.use(function (req, res, next) {
+  res.header("Access-Control-Allow-Origin", "*");
+
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+  );
+  res.header("Access-Control-Allow-credentials", true);
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, UPDATE");
+  next();
+});
+
 // Path to the JSON file that will act as our database
 const DB_PATH = join(process.cwd(), "data", "requisitions.json");
 const CANDIDATES_DB_PATH = join(process.cwd(), "data", "candidates.json");
@@ -153,29 +175,6 @@ app.use((err, req, res, next) => {
     });
   }
   next(err);
-});
-
-// Middleware
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-    exposedHeaders: ["Content-Range", "X-Content-Range"],
-    credentials: true,
-    maxAge: 86400, // 24 hours
-  })
-);
-app.use(function (req, res, next) {
-  res.header("Access-Control-Allow-Origin", "*");
-
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
-  );
-  res.header("Access-Control-Allow-credentials", true);
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, UPDATE");
-  next();
 });
 
 // Routes
