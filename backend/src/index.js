@@ -766,6 +766,66 @@ ANALYSIS: [detailed analysis]`;
   }
 }
 
+async function analyzeHRAssignment(assignmentFile, assignmentPath) {
+  try {
+    const assignmentContent = await fs.readFile(assignmentPath, "utf8");
+    const portfolioContent = await fs.readFile(assignmentFile.path, "utf8");
+
+    const prompt = `You are an expert design reviewer. Please analyze this design assignment submission:
+
+Assignment req:
+${portfolioContent}
+
+Assignment responese:
+${assignmentContent}
+
+Please focus on:
+1. HR Process Implementation:
+   - Review HR workflow implementation
+   - Check recruitment process automation
+   - Evaluate candidate management features
+   - Assess employee onboarding flows
+
+2. Data Management:
+   - Review data organization and structure
+   - Check data validation and security
+   - Evaluate database schema design
+   - Assess data privacy compliance
+
+3. User Experience:
+   - Evaluate HR portal usability
+   - Check form designs and validations
+   - Assess workflow efficiency
+   - Review accessibility features
+
+4. Technical Implementation:
+   - Review API integrations
+   - Check state management
+   - Evaluate error handling
+   - Assess code maintainability
+
+Format your response as:
+SCORE: [number]
+ANALYSIS: [detailed analysis]`;
+
+    const result = await geminiModel.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    // Extract score and analysis
+    const scoreMatch = text.match(/SCORE:\s*(\d+)/);
+    const analysisMatch = text.match(/ANALYSIS:([\s\S]*)/);
+
+    const score = scoreMatch ? parseInt(scoreMatch[1]) : 0;
+    const analysis = analysisMatch ? analysisMatch[1].trim() : text;
+
+    return { score, analysis };
+  } catch (error) {
+    console.error("Error analyzing design portfolio:", error);
+    throw new Error("Failed to analyze design portfolio");
+  }
+}
+
 // Function to analyze design portfolio with Gemini
 async function analyzeDesignPortfolio(portfolioFile, assignmentPath) {
   try {
@@ -849,18 +909,17 @@ app.post("/api/pr-review", upload.single("portfolio"), async (req, res) => {
     }
 
     // Role-specific validation
-    if (isFrontendRole || isHRRole) {
+    if (isFrontendRole) {
       if (!githubUrl || !previewUrl) {
         return res.status(400).json({
-          error:
-            "GitHub URL and preview URL are required for frontend and HR roles",
+          error: "GitHub URL and preview URL are required for frontend roles",
         });
       }
     } else {
       if (!req.file) {
-        return res
-          .status(400)
-          .json({ error: "Portfolio file is required for design roles" });
+        return res.status(400).json({
+          error: "Portfolio file is required for non-frontend roles",
+        });
       }
     }
 
@@ -876,13 +935,15 @@ app.post("/api/pr-review", upload.single("portfolio"), async (req, res) => {
 
     // Analyze submission based on role
     let analysis;
-    if (isFrontendRole || isHRRole) {
+    if (isFrontendRole) {
       analysis = await analyzeGithubRepo(
         githubUrl,
         previewUrl,
         assignmentPath,
         role
       );
+    } else if (isHRRole) {
+      analysis = await analyzeHRAssignment(req.file, assignmentPath);
     } else {
       analysis = await analyzeDesignPortfolio(req.file, assignmentPath);
     }
@@ -897,6 +958,52 @@ app.post("/api/pr-review", upload.single("portfolio"), async (req, res) => {
       status = "REJECTED";
     }
 
+    // Send AI interview scheduling email for shortlisted candidates
+    if (true || status === "SHORTLISTED") {
+      const interviewLink =
+        AI_Interview_links[
+          isFrontendRole ? "frontend" : isHRRole ? "hr" : "pm"
+        ];
+
+      await sendEmail({
+        to: email,
+        subject: "Schedule Your Round 1 Interview - Stage",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1 style="color: #2563eb; margin-bottom: 20px;">Schedule Your Round 1 Interview</h1>
+            
+            <p style="font-size: 16px; line-height: 1.6;">Dear ${name},</p>
+            
+            <p style="font-size: 16px; line-height: 1.6;">Congratulations on being shortlisted! The next step is to complete your Round 1 AI Interview.</p>
+            
+            <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h2 style="color: #1e40af; margin-top: 0;">Interview Details</h2>
+              
+              <p style="font-size: 16px; line-height: 1.6;">Please click the link below to start your AI interview:</p>
+              
+              <p style="text-align: center;">
+                <a href="${interviewLink}" 
+                   style="display: inline-block; background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                  Start Interview
+                </a>
+              </p>
+              
+              <p style="font-size: 16px; line-height: 1.6;">Important notes:</p>
+              <ul style="font-size: 16px; line-height: 1.6;">
+                <li>The interview will take approximately 30-45 minutes</li>
+                <li>Ensure you have a stable internet connection</li>
+                <li>Find a quiet place without distractions</li>
+                <li>Have your camera and microphone ready</li>
+              </ul>
+            </div>
+            
+            <p style="font-size: 16px; line-height: 1.6;">Best regards,<br>
+            <strong>Stage Hiring Team</strong></p>
+          </div>
+        `,
+      });
+    }
+
     // Create review object
     const review = {
       name,
@@ -906,7 +1013,7 @@ app.post("/api/pr-review", upload.single("portfolio"), async (req, res) => {
       score: analysis.score,
       analysis: analysis.analysis,
       submittedAt: new Date(),
-      ...(isFrontendRole || isHRRole
+      ...(isFrontendRole
         ? {
             githubUrl,
             previewUrl,
@@ -917,25 +1024,6 @@ app.post("/api/pr-review", upload.single("portfolio"), async (req, res) => {
     };
 
     // Store in MongoDB
-    await prReviews.insertOne(review);
-
-    // Store in PostgreSQL
-    await pool.query(
-      `INSERT INTO candidates (name, email, role, status, score, analysis, submitted_at, github_url, preview_url, portfolio_file)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [
-        name,
-        email,
-        role,
-        status,
-        analysis.score,
-        analysis.analysis,
-        new Date(),
-        isFrontendRole || isHRRole ? githubUrl : null,
-        isFrontendRole || isHRRole ? previewUrl : null,
-        !isFrontendRole && !isHRRole ? req.file.filename : null,
-      ]
-    );
 
     // Send email notifications
     const emailData = {
@@ -945,7 +1033,7 @@ app.post("/api/pr-review", upload.single("portfolio"), async (req, res) => {
       status,
       score: analysis.score,
       analysis: analysis.analysis,
-      ...(isFrontendRole || isHRRole
+      ...(isFrontendRole
         ? {
             githubUrl,
             previewUrl,
@@ -956,20 +1044,6 @@ app.post("/api/pr-review", upload.single("portfolio"), async (req, res) => {
     };
 
     // Send to admin
-    await sendEmail({
-      to: process.env.ADMIN_EMAIL,
-      subject: `New ${role} Assignment Submission - ${status}`,
-      template: "admin-notification",
-      data: emailData,
-    });
-
-    // Send to candidate
-    await sendEmail({
-      to: email,
-      subject: `Your ${role} Assignment Submission Results`,
-      template: "candidate-notification",
-      data: emailData,
-    });
 
     res.json({ review });
   } catch (error) {

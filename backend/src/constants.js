@@ -18,19 +18,19 @@ export const SCORING_CRITERIA = {
   SHORTLISTED: {
     minScore: 40,
     status: "SHORTLISTED",
-    emailSubject: "Next Round: Technical Assignment",
+    emailSubject: "Next Round: Assignment",
     emailTemplate: (role, name) => `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h1 style="color: #2563eb; margin-bottom: 20px;">Next Round: Technical Assignment</h1>
+        <h1 style="color: #2563eb; margin-bottom: 20px;">Next Round:  Assignment</h1>
         
         <p style="font-size: 16px; line-height: 1.6;">Dear ${name},</p>
         
         <p style="font-size: 16px; line-height: 1.6;">Thank you for your interest in the <strong>${role}</strong> position. We would like to proceed with your application to the next round of our selection process.</p>
         
         <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <h2 style="color: #1e40af; margin-top: 0;">Technical Assignment Details</h2>
+          <h2 style="color: #1e40af; margin-top: 0;"> Assignment Details</h2>
           
-          <p style="font-size: 16px; line-height: 1.6;">Please find attached a technical assignment that will help us evaluate your skills. Important details:</p>
+          <p style="font-size: 16px; line-height: 1.6;">Please find attached a  assignment that will help us evaluate your skills. Important details:</p>
           
           <ul style="font-size: 16px; line-height: 1.6;">
             <li>Assignment is attached to this email</li>
@@ -93,4 +93,6 @@ export const AI_Interview_links = {
     "https://screener.hyring.com/jobseeker/ai-interview/preview?interviewId=e038ce98-5bd6-4496-bbdc-7a3d164304be",
   frontend:
     "https://screener.hyring.com/jobseeker/ai-interview/preview?interviewId=7cdd7a6d-c26c-4cf1-a8e1-5b717c489571",
+  hr: "https://screener.hyring.com/jobseeker/ai-interview/preview?interviewId=798d417b-8b7d-40cb-80e4-8b9f35fff56e",
+  pm: "https://screener.hyring.com/jobseeker/ai-interview/preview?interviewId=2c6373c9-56be-4ae3-a01b-fc06d2556485",
 };
