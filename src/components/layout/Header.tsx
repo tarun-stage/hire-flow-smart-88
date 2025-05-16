@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Bell, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,14 +11,33 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useNavigate } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
 
 export default function Header() {
   const [notifications, setNotifications] = useState([
-    { id: 1, text: "New candidate application for Senior Developer", time: "10 minutes ago" },
-    { id: 2, text: "John Smith approved your job requisition", time: "1 hour ago" },
-    { id: 3, text: "Interview scheduled with Alex Johnson", time: "2 hours ago" },
+    {
+      id: 1,
+      text: "New candidate application for Senior Developer",
+      time: "10 minutes ago",
+    },
+    {
+      id: 2,
+      text: "John Smith approved your job requisition",
+      time: "1 hour ago",
+    },
+    {
+      id: 3,
+      text: "Interview scheduled with Alex Johnson",
+      time: "2 hours ago",
+    },
   ]);
 
   const [showNotifications, setShowNotifications] = useState(false);
@@ -27,6 +45,8 @@ export default function Header() {
   const [currentStep, setCurrentStep] = useState(1);
   const [role, setRole] = useState("");
   const [experience, setExperience] = useState("");
+  const [jobDescription, setJobDescription] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleOpenModal = () => {
@@ -39,45 +59,71 @@ export default function Header() {
     setCurrentStep(1);
     setRole("");
     setExperience("");
+    setJobDescription("");
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (currentStep === 1) {
-      setCurrentStep(2);
+      try {
+        setIsLoading(true);
+        const response = await fetch("http://localhost:3001/api/create-jd", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            role: role,
+            yearsOfExperience: experience,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch job description");
+        }
+
+        const data = await response.json();
+        setJobDescription(data.jobDescription);
+        setCurrentStep(2);
+      } catch (error) {
+        console.error("Error fetching job description:", error);
+        // You might want to show an error toast or message here
+      } finally {
+        setIsLoading(false);
+      }
     } else {
-      // Handle form submission
-      handleCloseModal();
-      navigate("/requisitions");
+      // Create requisition and send email
+      try {
+        setIsLoading(true);
+        const response = await fetch(
+          "http://localhost:3001/api/create-requisition",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              role,
+              yearsOfExperience: experience,
+              jobDescription,
+              email: "tarun@stage.in",
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to create requisition");
+        }
+
+        handleCloseModal();
+        navigate("/requisitions");
+      } catch (error) {
+        console.error("Error creating requisition:", error);
+        // You might want to show an error toast or message here
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
-
-  const jobDescription = `# Full Stack Developer
-
-## About Us
-We are a fast-growing tech company that builds innovative solutions for modern businesses. Our team is passionate about creating great software that solves real problems.
-
-## Role Description
-We are looking for a talented Full Stack Developer to join our engineering team. In this role, you will work on both front-end and back-end development for our web applications. You will collaborate with product managers, designers, and other developers to create high-quality, scalable software.
-
-## Requirements
-- 3+ years of experience in software development
-- Proficiency in JavaScript/TypeScript, Node.js, and React
-- Experience with databases (SQL and NoSQL)
-- Understanding of cloud services (AWS/Azure/GCP)
-- Knowledge of Git and CI/CD pipelines
-
-## Nice-to-Have Skills
-- Experience with GraphQL and RESTful APIs
-- Knowledge of Docker and Kubernetes
-- Understanding of microservices architecture
-- Experience with TDD and BDD
-
-## Benefits
-- Competitive salary and equity options
-- Flexible work arrangements (remote/hybrid)
-- Health, dental, and vision insurance
-- Professional development budget
-- Unlimited PTO`;
 
   return (
     <header className="h-16 border-b border-gray-200 bg-white fixed top-0 right-0 left-0 z-20 flex items-center px-4">
@@ -90,12 +136,12 @@ We are looking for a talented Full Stack Developer to join our engineering team.
             className="pl-8 bg-gray-50"
           />
         </div>
-        
+
         <div className="flex items-center ml-4">
           <div className="relative">
-            <Button 
-              variant="ghost" 
-              size="icon" 
+            <Button
+              variant="ghost"
+              size="icon"
               className="relative"
               onClick={() => setShowNotifications(!showNotifications)}
             >
@@ -104,7 +150,7 @@ We are looking for a talented Full Stack Developer to join our engineering team.
                 {notifications.length}
               </span>
             </Button>
-            
+
             {showNotifications && (
               <div className="absolute right-0 mt-2 w-80 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-200 animate-fade-in">
                 <div className="py-2 px-4 bg-primary-50 border-b border-gray-200">
@@ -112,27 +158,34 @@ We are looking for a talented Full Stack Developer to join our engineering team.
                 </div>
                 <div className="max-h-80 overflow-y-auto">
                   {notifications.map((notification) => (
-                    <div 
-                      key={notification.id} 
+                    <div
+                      key={notification.id}
                       className="px-4 py-3 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
                     >
-                      <p className="text-sm text-gray-800">{notification.text}</p>
-                      <p className="text-xs text-gray-500 mt-1">{notification.time}</p>
+                      <p className="text-sm text-gray-800">
+                        {notification.text}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {notification.time}
+                      </p>
                     </div>
                   ))}
                 </div>
                 <div className="py-2 px-4 border-t border-gray-200">
-                  <Button variant="link" className="w-full justify-center text-xs">
+                  <Button
+                    variant="link"
+                    className="w-full justify-center text-xs"
+                  >
                     View all notifications
                   </Button>
                 </div>
               </div>
             )}
           </div>
-          
-          <Button 
-            variant="default" 
-            size="sm" 
+
+          <Button
+            variant="default"
+            size="sm"
             className="ml-4 bg-primary-600 hover:bg-primary-700"
             onClick={handleOpenModal}
           >
@@ -140,7 +193,10 @@ We are looking for a talented Full Stack Developer to join our engineering team.
           </Button>
 
           {/* Step 1: Role and Experience Modal */}
-          <Dialog open={showModal && currentStep === 1} onOpenChange={(open) => !open && handleCloseModal()}>
+          <Dialog
+            open={showModal && currentStep === 1}
+            onOpenChange={(open) => !open && handleCloseModal()}
+          >
             <DialogContent className="sm:max-w-[425px]">
               <DialogHeader>
                 <DialogTitle>Create New Requisition</DialogTitle>
@@ -177,15 +233,21 @@ We are looking for a talented Full Stack Developer to join our engineering team.
                 <Button variant="outline" onClick={handleCloseModal}>
                   Cancel
                 </Button>
-                <Button onClick={handleNext} disabled={!role || !experience}>
-                  Next
+                <Button
+                  onClick={handleNext}
+                  disabled={!role || !experience || isLoading}
+                >
+                  {isLoading ? "Loading..." : "Next"}
                 </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
 
           {/* Step 2: Job Description Modal */}
-          <Dialog open={showModal && currentStep === 2} onOpenChange={(open) => !open && handleCloseModal()}>
+          <Dialog
+            open={showModal && currentStep === 2}
+            onOpenChange={(open) => !open && handleCloseModal()}
+          >
             <DialogContent className="sm:max-w-[700px]">
               <DialogHeader>
                 <DialogTitle>Job Description</DialogTitle>
@@ -194,16 +256,16 @@ We are looking for a talented Full Stack Developer to join our engineering team.
                 </DialogDescription>
               </DialogHeader>
               <div className="py-4">
-                <div className="border rounded-md p-4 bg-gray-50 max-h-[400px] overflow-y-auto">
-                  <pre className="whitespace-pre-wrap text-sm">{jobDescription}</pre>
+                <div className="border rounded-md p-4 bg-gray-50 max-h-[400px] overflow-y-auto prose prose-sm">
+                  <ReactMarkdown>{jobDescription}</ReactMarkdown>
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setCurrentStep(1)}>
                   Back
                 </Button>
-                <Button onClick={handleNext}>
-                  Create Requisition
+                <Button onClick={handleNext} disabled={isLoading}>
+                  {isLoading ? "Creating..." : "Create Requisition"}
                 </Button>
               </DialogFooter>
             </DialogContent>

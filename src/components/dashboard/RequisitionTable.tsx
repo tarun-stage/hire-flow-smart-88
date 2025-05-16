@@ -1,4 +1,3 @@
-
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle, Clock, XCircle } from "lucide-react";
@@ -16,7 +15,9 @@ type RequisitionTableProps = {
   requisitions: Requisition[];
 };
 
-export default function RequisitionTable({ requisitions }: RequisitionTableProps) {
+export default function RequisitionTable({
+  requisitions,
+}: RequisitionTableProps) {
   const getStatusIcon = (status: Requisition["status"]) => {
     switch (status) {
       case "Approved":
@@ -67,7 +68,10 @@ export default function RequisitionTable({ requisitions }: RequisitionTableProps
                 </td>
                 <td className="py-3 px-4">{req.department}</td>
                 <td className="py-3 px-4">
-                  <Badge variant="outline" className={getStatusColor(req.status)}>
+                  <Badge
+                    variant="outline"
+                    className={getStatusColor(req.status)}
+                  >
                     <span className="flex items-center gap-1">
                       {getStatusIcon(req.status)} {req.status}
                     </span>
@@ -76,7 +80,9 @@ export default function RequisitionTable({ requisitions }: RequisitionTableProps
                 <td className="py-3 px-4">{req.applications}</td>
                 <td className="py-3 px-4">{req.dateCreated}</td>
                 <td className="py-3 px-4 text-right">
-                  <Button variant="ghost" size="sm">View</Button>
+                  <Button variant="ghost" size="sm">
+                    View
+                  </Button>
                 </td>
               </tr>
             ))}
